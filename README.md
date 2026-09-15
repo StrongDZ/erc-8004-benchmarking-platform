@@ -19,23 +19,32 @@ An event-driven backend continuously crawls five EVM chains, decodes Identity an
 ## Architecture
 
 ```
-EVM chains (×5) → indexer (log crawler) → RabbitMQ → event-decoder (decode + upsert) → Redis Pub/Sub
+EVM chains (×5) → indexer → Redpanda (raw event log) ─┬→ event-decoder → RabbitMQ → downstream workers
+                                                        │                              (uri-bootstrap, wallet-enrich,
+                                                        │                               trustrank, …)
+                                                        └→ bronze-archiver → MinIO/S3, partitioned Parquet (raw archive)
                                                                                         ↘
-                                                                     API server subscribes & WS fan-out
+                                                                     API (Go) subscribes & WS fan-out
                                                                                         ↘
                                                         Next.js dashboard — leaderboard, agent profiles, live feed
 
-Feedback → rule-based classifier (junk / quantity / quality cascade) → LLM fallback (AI service)
-                                                                              ↘
-                                                        reputation engine (evidence-weighted, Bayesian-bounded,
-                                                                            5-component composite + WalletTrust)
+Feedback → rule cascade (at ingest) ──────────────────────────────────┐
+        └→ unresolved → feedback-others → classifier cascade           │
+                         (per-tag SVM / embedding-cosine / kNN / LLM,   │
+                          via erc-8004-ai-service)                     ↓
+                                                    feedback-grader (low-latency incremental update)
+                                                                        ↓ reconciled each cycle by
+                                                    score-refresh (periodic authoritative replay)
+                                                                        ↓
+                        5-component composite score — Reputation · Adoption · Services · Publisher · Compliance
+                        (Publisher weighted by WalletTrust — a reviewer-credibility multiplier, 0.40–1.0)
 ```
 
 ## Repositories
 
 | Repo | Role | Stack |
 |---|---|---|
-| [erc-8004-benchmarking-be](https://github.com/StrongDZ/erc-8004-benchmarking-be) | EVM event indexing & decoding, reputation/TrustRank engine, REST + WebSocket API | Go, MongoDB, RabbitMQ, Redis |
+| [erc-8004-benchmarking-be](https://github.com/StrongDZ/erc-8004-benchmarking-be) | EVM event indexing & decoding, reputation/TrustRank engine, REST + WebSocket API | Go, MongoDB, Redis, RabbitMQ, Redpanda, MinIO |
 | [erc-8004-benchmarking-fe](https://github.com/StrongDZ/erc-8004-benchmarking-fe) | Realtime leaderboard, agent profiles, live event feed | Next.js 14, TypeScript |
 | [erc-8004-ai-service](https://github.com/StrongDZ/erc-8004-ai-service) | LLM feedback-classification fallback + classifier research notebooks | Python, FastAPI, Ollama |
 
@@ -43,7 +52,7 @@ The full written thesis, defense deck, and supporting research artifacts are mai
 
 ## Research contributions
 
-- An empirical comparison of feedback-classification approaches (zero-shot LLM, embedding + classical ML, few-shot LLM) quantifying the accuracy/latency/cost trade-offs that justify the production design.
+- Extensive offline classifier research (35+ benchmark/pipeline scripts) spanning rule cascades, per-tag SVM, embedding/FAISS retrieval, LLM comparisons, and ModernBERT fine-tuning with a data-efficiency study — quantifying the accuracy/latency/cost trade-offs behind the production design.
 - A parameter sensitivity study identifying which scoring constants most influence the resulting rankings.
 - Validation Registry integration is scoped as future work.
 
