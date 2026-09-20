@@ -18,9 +18,7 @@ An event-driven backend continuously crawls five EVM chains, decodes Identity an
 
 ## Architecture
 
-![Architecture](assets/architecture.png)
-
-![Scoring Pipeline](assets/scoring_pipeline.png)
+![Architecture](assets/architecture_overview.png)
 
 ## Repositories
 
